@@ -1,0 +1,569 @@
+---
+title: "Pairs Trading"
+author: "Chris Garcia , Han Win Maw"
+date: "April 4, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+   if(!require(pacman)) install.packages("pacman", repos = "http://cran.us.r-project.org", dependencies = TRUE)
+    library(pacman)
+    p_load(tidyverse)
+    p_load(readxl)
+    p_load(ggplot2)
+    p_load(lattice)
+```
+
+###Topic :			  Exploring the Pairs Trade Stock Trading Strategy
+
+For the longest period of time, people used hunches and educated guesses on deciding when to buy and sell stock. However, as we enter the digital age, people rely more on data, statistics, algorithms and computers to create a more concrete plan. Throughout the years, there have been many different strategies and one such strategy is Pairs Trade. Also call Position trading, this particular trading strategy typically involves trading two highly correlated assets. 
+
+For example, the Dow Jones Industrial Average and the S&P 500 indexes typically move together, therefore they have a high correlation. Traders that employ Pairs Trade look for deviations in this type of relationship and then attempt to exploit them. If the Dow moves higher while the S&P 500 drops, the trader takes a short position in the Dow and a long position in the S&P 500. Historically, the two ETF indexes have shared similar dips and highs, depending on the market. If the price of Dow were to go up a significant amount while S&P 500 stayed the same, a pairs trader would buy S&P 500 stock and sell Dow stock, assuming that the two indexes would later return to their historical balance point. If the price of Dow rose to close that gap in price, the trader would make money on the Dow stock, while if the price of S&P 500 fell, he would make money on having shorted the S&P 500 stock. In other words, sell high price stock of the overperformer and buy low price stock of the underperformer. The strategy’s profit is derived from the difference in price change between the two, rather than from the direction each moves. Therefore, ratios are used instead of continuous stock values.
+Pairs Trade relies on the notion that deviated stock will come back to its original value. However, that in itself is an assumption. It is assumed that the pair will have similar business conduct as in the past and will continue to do so in the future. Unfortunately, that is not always the case. For example, Pepsi and Coca Cola used to be the subject of Pairs Trading. But, in late 2014, both companies diverged to the point of non-correlation and, as a result, the strategy is rendered useless. Pairs Traders need to keep in mind of this probable future as the strategy only works when met with certain criterias. 
+ 
+In exploration of this topic, the project at hand will fulfill two things :
+
+1) A demonstration on how Pairs Trading work and how it is programmed in R.
+
+  i) A detailed walkthrough on its multiple functions and algorithms
+
+  ii) A visualization of the ratios used in actual trading
+
+  iii) Examples with real companies and scenarios
+
+2) Answer 3 questions regarding this particular trade strategy
+	i) The Limits and Capabilities
+		a) When can you use it/not use it
+b) What criteria are needed to met first	
+	i) Debunking myths on which companies are compatible/correlated
+
+
+
+#####**************************** FUNCTIONS ****************************
+
+```{r readData_Function , echo=TRUE}
+# ******************** CORE CODE ********************
+# CREATE READDATA FUNCTION - 6.3
+# Custom function to read data from CSV(s) and convert the "Date" column into an object class <Data>
+# Modified to allow user specify the certain time and column with name/index.
+
+readData = function( CSVFile , dateFormat = c( "%Y-%m-%d" , "%Y/%m/%d") , ... ){
+          data = read.csv(CSVFile , header = TRUE , stringsAsFactors = FALSE , ... )#Dates as String
+  
+# Iterative loop for Date Formatting
+    for (theformat in dateFormat){
+      temp = as.Date(data$Date, theformat)
+      if(all( !is.na(temp) ) ) { 
+        data$Date = temp
+        break
+      }
+    }
+# Format Function Output    
+    data[ order(data$Date), ]
+}
+
+# DO NOT TEMPER CODE
+```
+
+```{r combine2stocks_Function , echo=TRUE}
+# ******************** CORE CODE ********************
+# CREATE COMBINE2STOCKS FUNCTION - 6.3
+# Cutom function to combine 2 stock data sets into a single stock index
+# Purpose for pair trading and investing in common trade theme (market-stock analysis)
+
+# Combining stock data sets
+combine2Stocks = function( x, y , stockID = c(deparse(substitute(x)) , deparse(substitute(y)) )){
+              stockRange = range( intersect( x$Date, y$Date ))
+              x.sub = x[ x$Date >= stockRange[1] & x$Date <= stockRange[2] , ] # x == subjectA
+              y.sub = y[ y$Date >= stockRange[1] & y$Date <= stockRange[2] , ] # y == subjectB
+              
+# Structure the newly formated data into a proper format (By column , date & stockID )
+structure(data.frame(x.sub$Date, x.sub$Adj.Close, y.sub$Adj.Close), names = c("Date",stockID)  )
+}
+
+# DO NOT TEMPER CODE
+
+```
+
+```{r plotRatio_Function , echo=TRUE}
+# ******************** CORE CODE ********************
+# CREATE PLOTRATIO FUNCTION - 6.4
+# Custom function to plot stock ratio for profitability analysis
+# DISPLAYS CUT OFF POINTS ; "OPEN A POSITION"
+
+plotRatio = function (r, k = 1 , date = seq(along = r), ... ){ # r == ratio of the adjusted price
+            plot(date, r , type = "l", ... )
+            abline(h = c(mean(r),               # At the Mean : mean, mean+k*sd, mean-k*sd
+                         mean(r) + k * sd(r),    #Standard Deviation
+                         mean(r) - k * sd(r) ) , #k value == k standard deviation
+                   col = c("black", "red" , "green" ),
+                   lty = "dashed" ) #lty : line type
+}
+
+# DO NOT TEMPER CODE
+```
+
+```{r findNextPosition_Function , echo=TRUE}
+# ******************** CORE CODE ********************
+# CREATE FINDNEXT POSITION FUNCTION - 6.5
+# Custom function to find trading positions - opened & closed
+# First , compute all the opening and closing positions & indicate
+
+findNextPosition = function(ratio, startDate = 1 , k = 1 ,     #startDate is an index, index = 1
+                            m = mean(ratio) , s = sd(ratio) ) 
+                      {
+                            
+                            up = m + k *s
+                            down = m - k *s
+                            if(startDate > 1)
+                              ratio = ratio[ - (1:(startDate-1)) ]
+                            
+                            spread = ratio >= up | ratio <= down
+                            
+                            if(!any(spread))
+                              return(integer())
+                            
+                            start = which(spread)[1]
+                            balancePoint = if(ratio[start] > up )
+                                                ratio[ - (1:start) ] <= m
+                                            else
+                                                ratio[ - (1:start) ] >= m
+                            # Returns the end of position
+                            # Returns NA to indicate the position has not ended
+                            
+                            end = if(any(balancePoint))
+                                    which(balancePoint)[1] + start
+                                  else
+                                    length(ratio)
+                            
+                            c(start,end) + startDate - 1
+                            
+                      }
+
+# DO NOT TEMPER CODE
+```
+
+```{r showPosition_Function , echo=TRUE}
+# ******************** CORE CODE ********************
+# CREATE SHOWPOSITION FUNCTION
+# Custom function to display the Position graphically
+
+showPosition = function(days , ratio , radius=70 )
+                {
+                  if(is.list(days))
+                    days = unlist(days)
+                  
+                  symbols( days, ratio[days] ,
+                          circles = rep(radius , length(days) ),
+                          fg = c("darkgreen" , "red"),
+                          add = TRUE , inches = FALSE )
+                }
+                    
+                # Green == Open , Red == Close
+
+# DO NOT TEMPER CODE
+```
+
+```{r getPositions_Fucntion , echo=TRUE}
+# ******************** CORE CODE ********************
+# CREATE SHOWPOSITION FUNCTION - 6.5 
+# Custom function to find ALL the Positions
+
+getPositions = function(ratio , k = 1 , m = mean(ratio) , s = sd(ratio) )
+                {
+                  time = list()
+                  now = 1
+                  
+                  while( now < length(ratio)){
+                    temp = findNextPosition(ratio , now , k , m , s )
+                    if(length(temp) == 0 )
+                      break
+                    time[[ length(time)+1 ]] = temp
+                    if( is.na(temp[2])  || temp[2] == length(ratio) )
+                      break
+                    now = temp[2]
+                    
+                  }
+                  
+                  time
+                }
+
+
+# DO NOT TEMPER CODE
+
+```
+
+```{r positionProfit_Function , echo=TRUE}
+# ******************** CORE CODE ********************
+# CREATE POSITIONPROFIT FUNCTION - 6.5 
+# Custom function to find the profit of a certain position
+# Compares Stock Price A and Stock Price B
+# Determines how many units of A and B we can buy for $1 at the start of each position
+# ALSO determines whether to sell A or B , buy A or B - dependent on ratio
+
+positionProfit = function(position , stockPriceA, stockPriceB ,    #Indexing using position
+                                                                  # position = getPosition(r,k)
+                          ratioMean = mean(stockPriceA/stockPriceB),    
+                          p = 0.001 , byStock = FALSE )
+  
+                    {
+                      if(is.list(position) ){
+                        result = sapply(position, 
+                                        positionProfit, 
+                                        stockPriceA, 
+                                        stockPriceB,
+                                        ratioMean,
+                                        p,
+                                        byStock)
+                        
+                        if(byStock)
+                          rownames(result) = c("A" , "B" , "commission" )
+                        return(result)
+                      }
+                      # Prices at the start and end of positions
+                      priceA = stockPriceA[position]
+                      priceB = stockPriceB[position]
+                      
+                      # Units of A and B that can be bought with $1
+                      units_A = 1/priceA[1]
+                      units_B = 1/priceB[1]
+                      
+                      # $ amount of units of A and B that can be bought at the end of positions
+                      amount = c(units_A*priceA[2] , units_B*priceB[2] )
+                      
+                      # Indicator to show what stock to sell : A or B?
+                      sellStock = if(priceA[1]/priceB[1] > ratioMean ) "A" else "B"
+                      
+                      profit = if(sellStock == "A")
+                                c(( 1-amount[1] ) , (amount[2]-1) , - p * sum(amount) )
+                               else
+                                c(( 1-amount[2] ) , (amount[1]-1) , - p * sum(amount) )
+                      
+                      if(byStock)
+                        profit
+                      else
+                        sum(profit)
+                
+                    }
+
+
+# DO NOT TEMPER CODE
+```
+
+```{r sellWhat_Function , echo=TRUE}
+# ******************** EXTENSION CODE ********************
+# CREATE sellWhat FUNCTION - EXTENDS positionProfit()
+# Determines whether to sell A or B , buy A or B - dependent on ratio
+
+sellWhat = function(position , stockPriceA, stockPriceB ,    
+                          ratioMean = mean(stockPriceA/stockPriceB),    
+                          p = 0.001 , byStock = FALSE ){
+               
+            if(is.list(position) ){
+                        result = sapply(position,
+                                        sellWhat,
+                                        stockPriceA, 
+                                        stockPriceB,
+                                        ratioMean) 
+                        if(byStock)
+                          rownames(result) = c("A" , "B" , "commission" )
+                        return(result)
+                        }
+  
+              priceA = stockPriceA[position]
+              priceB = stockPriceB[position]
+              if(priceA[1]/priceB[1] > ratioMean) "A" else "B"
+}
+
+# DO NOT TEMPER CODE
+```
+
+```{r buyWhat_Function , echo=TRUE}
+# ******************** EXTENSION CODE ********************
+# CREATE buyWhat FUNCTION - EXTENDS positionProfit()
+# Determines whether to sell A or B , buy A or B - dependent on ratio
+
+buyWhat = function(position , stockPriceA, stockPriceB ,    
+                          ratioMean = mean(stockPriceA/stockPriceB),    
+                          p = 0.001 , byStock = FALSE ){
+               
+            if(is.list(position) ){
+                        result = sapply(position,
+                                        buyWhat,
+                                        stockPriceA, 
+                                        stockPriceB,
+                                        ratioMean) 
+                        if(byStock)
+                          rownames(result) = c("A" , "B" , "commission" )
+                        return(result)
+                        }
+  
+              priceA = stockPriceA[position]
+              priceB = stockPriceB[position]
+              if(priceA[1]/priceB[1] > ratioMean) "B" else "A"
+}
+
+# DO NOT TEMPER CODE
+```
+
+**** Why Would You Buy Shares of Stock? ****
+
+Investors buy stocks primarily to make a profit. But that said, it's not the only reason to buy stocks. Let's look at the most common reasons people buy stocks in the stock market:
+
+1) To make money. When stocks appreciate in value and are worth more than the investor paid to buy the stock, that's a positive outcome for investors.
+To earn dividend payments. When a publicly-traded company pays out dividends to shareholders, that adds value (and income) for the shareholder.
+To gain influence at a company. Stock market shareholders have the ability to vote on company matters and key issues.
+
+2) To outflank inflation. Inflation eats into income. Thus, making money on stocks helps investors stay ahead of inflation.
+
+3) To save for retirement and other long-term financial objectives. Since stocks appreciate over time, much more so than bonds or bank deposits, they are a great tool for investors looking to save for the long-haul -- especially for retirement.
+
+  **** Why Would You Sell Shares of Stock? ****
+  
+Once you buy a stock, you have the ability to sell it whenever you like. Under what conditions would you normally sell a stock? These factors come into consideration:
+
+1) To make a profit. You buy a stock for 10 dollars per share and six months later, it's worth 20 dollars per share. That's a good reason to sell stocks -- to make a profit.
+The stock represents too much risk. Often, people sell stocks to reduce risk. For example, if  shares have grown so much that the stock represents a major portion of an investor's portfolio, an investor may sell some or all of those shares to reduce that risk and create a more-balanced, or diversified, portfolio. 
+
+2) You are worried about the company. Sometimes, company fundamentals change and you don't have the same positive outlook you had on the stock when you bought it. It could be a scandal at the company, a new CEO, or bad news on the financial front. Each could be enough for someone to sell their stock.
+You need the money. If you have short-term cash needs -- paying for a child's college tuition, buying a home, or starting a business, for example -- selling a stock can give you an immediate cash infusion.
+
+You like another stock better. Often, investors sell shares of stock so they have the cash to buy another stock that they believe offers better value.
+
+#####**************************** DRIVER CODE(S)  ****************************
+
+
+```{r ReadCSV , echo=TRUE}
+# ******************** CONTROLLER : INPUT FILE FOR PAIR TRADING ANALYSIS ********************
+
+# READ CSV FILE(s)
+subjectA = readData("DIA.csv")
+subjectB = readData("SPY.csv")   
+
+
+# FIND STOCK OVERLAP & COMPUTE THE ADJUSTED RATIO (r)
+overlap = combine2Stocks(subjectA, subjectB)
+r = (overlap$subjectA/overlap$subjectB)
+
+
+```
+
+#####**************************** DEMO  ****************************
+
+```{r Demo0_DisplayStock , echo=TRUE}
+
+ggplot(subjectA,aes(Date,Adj.Close)) + 
+  geom_line(aes(color="Subject A")) +
+  geom_line(data=subjectB,aes(color="Subject B")) +
+  labs(color="Legend") +
+  scale_colour_manual("", breaks = c("Subject A", "Subject B"),
+                          values = c("blue", "red")) +
+  ggtitle("Closing Stock Prices") + 
+  theme(plot.title = element_text(lineheight=.7, face="bold"))
+
+```
+
+
+```{r Demo1_SetUp , echo=TRUE}
+
+  #SIMPLE TEST
+  names(overlap)
+  range(overlap$Date)  #DATES THAT OVERLAP
+  range(subjectA$Date)
+  range(subjectB$Date)  
+  
+# k == k ratio 
+  #- measures the return of securities over time; 
+  #- allows for comparison of cumulative returns for different equities (and equity managers) returns     over time. 
+
+plot = plotRatio(r , k = 0.85 , overlap$Date, col="darkblue", xlab = "Date" , ylab = "Price Ratio" )
+
+#legend("topleft" , 
+ #          legend=c("Spread/z-score" , "Mean", "Upper-Sell" , "Lower-Buy") , 
+  #         col=c("darkblue" ,"black","red","green") , 
+   #        lty="dashed"   )
+
+```
+Sell high price stock , Buy low price stock
+    
+    ENTRY POINTS
+When Z-score crosses upper threshold, go SHORT - Selling Over Performer:
+      #Sell stock A
+      #Buy stock B
+
+When z-score crosses lower threshold, go LONG - Selling the Under-Performer :
+      #Buy stock A
+      #Sell stock B
+
+    EXIT POINTS
+TAKE PROFIT is defined as scenarios where you take profit before the prices move in other direction. For instance, say you are LONG on the spread, that is, you have brought stock A and sold stock B as per the definition of the spread/z-score. The expectation is that spread will revert back to mean or 0. In a profitable situation, the mean would be approaching to zero or very close to it. You can keep Take Profit scenario as when the mean crosses zero for the first time after reverting from threshold levels.
+
+```{r Demo2_FindPosition , echo=TRUE}
+
+k = 0.5
+# First number = Open , Second number = Close  ; Units in days
+a = findNextPosition(r , k = k)       
+b = findNextPosition(r , a[2] , k = k)
+c = findNextPosition(r , b[2] , k = k)
+
+# Convert to Years
+#ainY = a/360
+#binY = b/360
+#cinY = c/360
+
+#ainY
+#binY
+#cinY
+
+#Show Positions - One at a Time
+plotRatio(r, k, col="lightblue" , xlab = "Days" , ylab = "Price Ratio" )
+showPosition(a , r)
+showPosition(b , r)
+showPosition(c , r)
+
+
+
+```
+
+```{r Demo3_ShowPosition , echo=TRUE}
+
+# Show ALL Positions
+k = 0.5
+position = getPositions(r,k)
+plotRatio(r, k, col = "lightblue" , xlab = "Days" , ylab = "Price Ratio" )
+showPosition(position , r)
+
+#legend("topleft" , 
+          # legend=c("Spread/z-score" , "Mean", "Upper-Sell" , "Lower-Buy") , 
+          # col=c("lightblue" ,"black","red","green") , 
+          # lty="dashed"   )
+
+
+
+```
+
+```{r Demo4_PositionProfit , echo=TRUE}
+
+#Profit of each Position
+
+# If byStock parameter is allowed, returns not total profit but individual profit from A and B
+
+#positionProfit( position , stockPriceA , stockPriceB , ratioMean, p , byStock )
+
+profit = positionProfit( position , overlap$subjectA , overlap$subjectB , mean(r) )
+summary(profit)
+
+# V stands for volume or Position ; V1 == Position 1
+# Net Profit PER UNIT
+# Negative == BUY , Positive = SELL   ; 
+
+
+
+# byStock parameter active
+profit = positionProfit( position , overlap$subjectA , overlap$subjectB , mean(r) , byStock = TRUE)
+round(profit, 2)
+
+CountSellStock<- sellWhat( position , overlap$subjectA , overlap$subjectB , mean(r) )
+CountSellStock
+table(CountSellStock)
+
+CountBuyStock <- buyWhat( position , overlap$subjectA , overlap$subjectB , mean(r) )
+#CountBuyStock
+#table(CountBuyStock)
+
+#Going Short - UPPER BOUND
+#A - SELL , B - BUY
+
+#Going Long - LOWER BOUND
+#A - BUY , B - SELL
+
+
+```
+
+  Train, Validate and Optimize
+
+Now, ready to use the functions manufactured to find the best K value from "training" historical data and then apply the optimal K to test the data sets. 
+
+Finding the optimal K or K-Ratio is absolutely important. It dictates and indicates where the upper and lower bound are placed as well as the optimal or "correct" positions.
+
+```{r ADDDEMO1_train&test , echo=TRUE}
+# DISPLACED --- CORE CODE
+# CREATE train & test , noncustom   - RUN THIS AT THE END OR AFTER ReadCSV
+# Train, Validate and Optimize - Trains and tests data sets
+# Determines the best value of k
+# THIS CODE IS UNMODIFIED - DIRECTLY FROM TEXT 
+
+i = 1:floor(nrow(overlap)/2)
+train = overlap[i, ]
+test = overlap[ - i, ]
+
+# Train Data Set
+train.period = seq(min(overlap$Date) , by = "5 years" , length=2 )
+
+subjectA.train = subset(subjectA , Date >= train.period[1] & Date < train.period[2] )$Adj.Close
+subjectB.train = subset(subjectB , Date >= train.period[1] & Date < train.period[2] )$Adj.Close
+r.train = subjectA.train/subjectB.train
+
+# Test Data Set
+
+subjectA.test = subset(subjectA , !(Date >= train.period[1] & Date < train.period[2] ))$Adj.Close
+subjectB.test = subset(subjectB , !(Date >= train.period[1] & Date < train.period[2] ))$Adj.Close
+r.test = subjectA.test/subjectB.test
+
+
+```
+
+
+```{r ADDDEMO2_findingProfitforDiffK , echo=TRUE}
+# DISPLACED --- CORE CODE
+# FIND AND CHART PROFIT FOR DIFFERENT VALUES OF K
+
+k.max = max( (r.train - mean(r.train)) / sd(r.train))
+k.min = min( (abs(r.train - mean(r.train)) / sd(r.train)) )
+# K sequence
+ks = seq(k.min , k.max , length = 1000 )
+m = mean(r.train)
+
+profits = sapply(ks , function(k)
+                      {
+  
+                        pos = getPositions(r.train, k)
+                        sum(positionProfit(pos, train$subjectA , train$subjectB , mean(r.train) ))
+                        
+                      })
+
+plot(ks , profits , type = "l" , xlab = "k" , ylab = "Profit" )
+ks[ profits == max(profits) ]
+
+```
+
+```{r ADDEMO3_%Yeild , echo=TRUE }
+# TRUE/FALSE Test - To check if all of the positions are the same as stated above.
+temp.k = ks[ profits == max(profits) ]
+pos = getPositions(r.train , temp.k[1] )
+all(sapply(temp.k[-1], function(k){identical(pos,getPositions(r.train,k)) } ))
+
+# USE THE MEAN OF THE VALUES OF POSSIBLE K FOR OPTIMAL K VALUE
+k.use = mean(ks[ profits == max(profits) ] )
+k.use
+
+max(profits)  #Indicates Return on Investment (ROI)  
+# Rate of return - profit gained from $1
+
+```
+
+```{r finalResult_CorrectPairTradeGraph , echo=TRUE}
+
+k = k.use
+position = getPositions(r, k)
+plotRatio(r, k, col = "lightblue" , xlab = "Days" , ylab = "Price Ratio" )
+showPosition(position , r)
+
+profitNew = positionProfit( position , overlap$subjectA , overlap$subjectB , mean(r) , byStock=TRUE )
+round(profitNew, 2)
+Count2<- sellWhat( position , overlap$subjectA , overlap$subjectB , mean(r) )
+Count2
+table(Count2)
+
+```
